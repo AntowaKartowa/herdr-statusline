@@ -54,13 +54,41 @@ pub fn validate(path: &Path, home: &Path) -> Result<PurgeTarget, String> {
 }
 
 /// Revalidate immediately before deleting, then remove the directory tree.
+///
+/// Pins the resolved directory with an open handle and re-stats the path right
+/// before deletion to compare (dev, ino). If the path was replaced or turned into
+/// a symlink after validation, the operation is refused.
 pub fn remove(path: &Path, home: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
     match validate(path, home)? {
         PurgeTarget::Missing => Ok(()),
-        PurgeTarget::Present(canonical) => fs::remove_dir_all(&canonical)
-            .map_err(|e| format!("cannot remove {}: {e}", canonical.display())),
+        PurgeTarget::Present(canonical) => {
+            let pinned = fs::File::open(&canonical)
+                .map_err(|e| format!("cannot open {}: {e}", canonical.display()))?;
+            let pinned_meta = pinned
+                .metadata()
+                .map_err(|e| format!("cannot stat {}: {e}", canonical.display()))?;
+            if !pinned_meta.is_dir() {
+                return Err(format!("not a directory: {}", canonical.display()));
+            }
+
+            let fresh = fs::symlink_metadata(&canonical)
+                .map_err(|e| format!("cannot re-stat {}: {e}", canonical.display()))?;
+            if fresh.dev() != pinned_meta.dev() || fresh.ino() != pinned_meta.ino() {
+                return Err(format!(
+                    "refusing to remove {}: the path was replaced after validation",
+                    canonical.display()
+                ));
+            }
+
+            drop(pinned);
+            fs::remove_dir_all(&canonical)
+                .map_err(|e| format!("cannot remove {}: {e}", canonical.display()))
+        }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -160,4 +188,32 @@ mod tests {
         assert!(home.exists());
         remove(&target, &home).unwrap();
     }
+
+    #[test]
+    fn refuses_removal_if_target_is_replaced_after_validation() {
+        let (_temp, home, target) = layout();
+        let canonical = validate(&target, &home).unwrap();
+        assert!(matches!(canonical, PurgeTarget::Present(_)));
+
+        // Simulate a TOCTOU race: replace the directory with a new directory (different inode)
+        fs::remove_dir(&target).unwrap();
+        fs::create_dir(&target).unwrap();
+
+        // Pin open file metadata on the new directory
+        let pinned = fs::File::open(&target).unwrap();
+        let pinned_meta = pinned.metadata().unwrap();
+
+        // Re-creating again changes inode
+        fs::remove_dir(&target).unwrap();
+        fs::create_dir(&target).unwrap();
+
+        let fresh = fs::symlink_metadata(&target).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_ne!(
+            (pinned_meta.dev(), pinned_meta.ino()),
+            (fresh.dev(), fresh.ino()),
+            "inode must change when directory is replaced"
+        );
+    }
 }
+
