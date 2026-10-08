@@ -93,6 +93,10 @@ umask "${HSL_ORIGINAL_UMASK:-022}"
 # check gives the same answer on a contributor's machine and on CI.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
+    # Run user stop hook BEFORE killing the tmux server.
+    # The hook may need to query herdr or tmux, which requires the server alive.
+    run_hook hsl_stop "${HSL_STOP:-}"
+
     "$TMUX_BIN" -L "$socket" kill-server >/dev/null 2>&1 || true
     rm -rf "$runtime"
     remove_status_options
@@ -255,7 +259,12 @@ apply_status_options() {
             return 2
             ;;
     esac
-    count=$(sed -n '3p' "$STATUS_OPTIONS") || {
+
+    # Lifecycle hooks (may be empty)
+    HSL_INIT=$(sed -n '3p' "$STATUS_OPTIONS")
+    HSL_STOP=$(sed -n '4p' "$STATUS_OPTIONS")
+
+    count=$(sed -n '5p' "$STATUS_OPTIONS") || {
         printf '%s\n' 'hsl: invalid hsl-config output' >&2
         return 2
     }
@@ -269,16 +278,16 @@ apply_status_options() {
         printf '%s\n' 'hsl: invalid hsl-config output' >&2
         return 2
     }
-    [ "$lines" -eq $((3 + count * 2)) ] || {
+    [ "$lines" -eq $((5 + count * 2)) ] || {
         printf '%s\n' 'hsl: invalid hsl-config output' >&2
         return 2
     }
     index=0
     while [ "$index" -lt "$count" ]; do
-        name=$(sed -n "$((4 + index * 2))p" "$STATUS_OPTIONS") || return 2
+        name=$(sed -n "$((6 + index * 2))p" "$STATUS_OPTIONS") || return 2
         # Command substitution strips the line terminator and nothing else, so
         # a value's leading and trailing spaces survive.
-        value=$(sed -n "$((5 + index * 2))p" "$STATUS_OPTIONS") || return 2
+        value=$(sed -n "$((7 + index * 2))p" "$STATUS_OPTIONS") || return 2
         case $name in
             window-status-*) scope=-gw ;;
             *) scope=-g ;;
@@ -376,6 +385,22 @@ apply_mouse_clicks() {
     done
 }
 
+# Run a user lifecycle hook. The command is a shell string evaluated by /bin/sh -c.
+# Environment variables HERDR_PLUGIN_CONFIG_DIR, HERDR_SESSION, and
+# HSL_CACHE_DIR are available to the hook.
+# A failing hook is logged but does not abort HSL startup/shutdown.
+run_hook() {
+    label=$1
+    command=$2
+    [ -n "$command" ] || return 0
+    if /bin/sh -c "$command"; then
+        :
+    else
+        hook_status=$?
+        printf 'hsl: %s hook failed (exit %s): %s\n' "$label" "$hook_status" "$command" >&2
+    fi
+}
+
 # A failure here must not reach herdr. The launcher is still blocked in
 # `wait-for hsl-start`, so exiting takes the whole server down with it.
 if ! apply_status_options; then
@@ -385,6 +410,11 @@ fi
 if ! apply_mouse_clicks; then
     exit 2
 fi
+
+export HSL_INSTANCE_ID="$socket"
+
+# Run user init hook (daemon start, custom setup, etc.)
+run_hook hsl_init "${HSL_INIT:-}"
 
 # Detect allow-passthrough by setting it, not by parsing tmux -V.
 "$TMUX_BIN" -L "$socket" set-option -g allow-passthrough on >/dev/null 2>&1 || true

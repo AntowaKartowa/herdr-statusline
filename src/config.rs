@@ -15,6 +15,11 @@ struct RawConfig {
     /// asks it for 1000/1002/1003/1006 reporting.
     #[serde(default)]
     mouse_clicks: bool,
+    /// Shell command to run when the HSL instance starts.
+    #[serde(default)]
+    hsl_init: Option<String>,
+    /// Shell command to run when the HSL instance stops.
+    hsl_stop: Option<String>,
     #[serde(default)]
     statusline: Statusline,
 }
@@ -57,6 +62,10 @@ impl<'de> Deserialize<'de> for Statusline {
 pub struct NormalizedConfig {
     pub enabled: bool,
     pub mouse_clicks: bool,
+    /// Shell command to run when the HSL instance starts. Empty = no hook.
+    pub hsl_init: String,
+    /// Shell command to run when the HSL instance stops. Empty = no hook.
+    pub hsl_stop: String,
     /// `(tmux option name, value)`, in document order.
     pub options: Vec<(String, String)>,
 }
@@ -69,14 +78,33 @@ pub fn load(config_file: &Path) -> Result<NormalizedConfig, String> {
     normalize(raw)
 }
 
+/// Validate a lifecycle hook value. Must be a single line if present.
+fn validate_hook(key: &str, value: Option<String>) -> Result<String, String> {
+    match value {
+        None => Ok(String::new()),
+        Some(text) => {
+            if text.contains('\n') || text.contains('\r') {
+                return Err(format!("{key:?} must be a single line"));
+            }
+            Ok(text)
+        }
+    }
+}
+
 fn normalize(raw: RawConfig) -> Result<NormalizedConfig, String> {
     let mut options = Vec::with_capacity(raw.statusline.0.len());
     for (key, value) in raw.statusline.0 {
         options.push((option_name(&key)?, option_value(&key, value)?));
     }
+
+    let hsl_init = validate_hook("hsl_init", raw.hsl_init)?;
+    let hsl_stop = validate_hook("hsl_stop", raw.hsl_stop)?;
+
     Ok(NormalizedConfig {
         enabled: raw.enabled,
         mouse_clicks: raw.mouse_clicks,
+        hsl_init,
+        hsl_stop,
         options,
     })
 }
@@ -141,6 +169,8 @@ fn option_value(key: &str, value: toml::Value) -> Result<String, String> {
 pub fn write_protocol(config: &NormalizedConfig, mut out: impl Write) -> Result<(), String> {
     writeln!(out, "{}", config.enabled).map_err(|e| e.to_string())?;
     writeln!(out, "{}", config.mouse_clicks).map_err(|e| e.to_string())?;
+    writeln!(out, "{}", config.hsl_init).map_err(|e| e.to_string())?;
+    writeln!(out, "{}", config.hsl_stop).map_err(|e| e.to_string())?;
     writeln!(out, "{}", config.options.len()).map_err(|e| e.to_string())?;
     for (name, value) in &config.options {
         writeln!(out, "{name}").map_err(|e| e.to_string())?;

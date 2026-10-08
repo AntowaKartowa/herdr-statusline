@@ -22,6 +22,21 @@ enabled = true
 #
 #   mouse_clicks = true
 
+# Lifecycle hooks. Shell commands run by /bin/sh -c at HSL start/stop.
+# $HERDR_PLUGIN_CONFIG_DIR is available in both hooks.
+#
+# hsl_init runs after the tmux server is configured but before herdr starts.
+# Use it to launch background processes (daemons, watchers) that feed the
+# status line.
+#
+# hsl_stop runs during cleanup, before the tmux server is killed. Use it to
+# signal background processes to stop. Keep this fast — it runs inside a signal
+# handler.
+#
+# Example — start/stop a starship-info daemon:
+#   hsl_init = "zsh $HERDR_PLUGIN_CONFIG_DIR/starship-info-daemon.zsh &"
+#   hsl_stop = "$HERDR_PLUGIN_CONFIG_DIR/starship-info-daemon-stop.sh"
+
 [statusline]
 status_interval = 1
 status_right = "%m/%d %H:%M:%S"
