@@ -404,7 +404,46 @@ window_status_current_format = \"#[fg=colour255,bg=colour27,bold] #I: #W #[defau
         write_protocol(&config, &mut out).unwrap();
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "false\ntrue\n2\nstatus-interval\n2\nstatus-left\n a \n"
+            "false\ntrue\n\n\n2\nstatus-interval\n2\nstatus-left\n a \n"
+        );
+    }
+
+    #[test]
+    fn parses_lifecycle_hooks_and_defaults_to_empty() {
+        let default_config = load_text("enabled = true\n").unwrap();
+        assert_eq!(default_config.hsl_init, "");
+        assert_eq!(default_config.hsl_stop, "");
+
+        let configured = load_text(
+            "hsl_init = \"echo starting\"\n\
+             hsl_stop = \"echo stopping\"\n",
+        )
+        .unwrap();
+        assert_eq!(configured.hsl_init, "echo starting");
+        assert_eq!(configured.hsl_stop, "echo stopping");
+    }
+
+    #[test]
+    fn rejects_multiline_lifecycle_hooks() {
+        let err_init = load_text("hsl_init = \"echo 1\\necho 2\"\n").unwrap_err();
+        assert!(err_init.contains("must be a single line"), "{err_init}");
+
+        let err_stop = load_text("hsl_stop = \"echo 1\\recho 2\"\n").unwrap_err();
+        assert!(err_stop.contains("must be a single line"), "{err_stop}");
+    }
+
+    #[test]
+    fn writes_protocol_with_lifecycle_hooks() {
+        let config = load_text(
+            "enabled = true\nmouse_clicks = false\n\
+             hsl_init = \"start.sh\"\nhsl_stop = \"stop.sh\"\n",
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        write_protocol(&config, &mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "true\nfalse\nstart.sh\nstop.sh\n0\n"
         );
     }
 

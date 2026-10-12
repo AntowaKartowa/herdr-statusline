@@ -52,7 +52,7 @@ def ensure_helper():
     return HELPER
 
 
-def write_protocol(base, pairs, enabled=True, mouse_clicks=False):
+def write_protocol(base, pairs, enabled=True, mouse_clicks=False, hsl_init="", hsl_stop=""):
     """Write a protocol file by running the shipped writer.
 
     Tests name tmux options with dashes and state values as they should reach
@@ -63,8 +63,12 @@ def write_protocol(base, pairs, enabled=True, mouse_clicks=False):
     lines = [
         f"enabled = {'true' if enabled else 'false'}",
         f"mouse_clicks = {'true' if mouse_clicks else 'false'}",
-        "[statusline]",
     ]
+    if hsl_init:
+        lines.append(f"hsl_init = {json.dumps(hsl_init)}")
+    if hsl_stop:
+        lines.append(f"hsl_stop = {json.dumps(hsl_stop)}")
+    lines.append("[statusline]")
     for name, value in pairs:
         # TOML basic strings share JSON's escapes over the printable subset, so
         # json.dumps yields a correct literal for embedded quotes and

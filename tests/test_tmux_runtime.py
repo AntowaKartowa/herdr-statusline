@@ -149,7 +149,7 @@ class TmuxRuntimeTests(unittest.TestCase):
             }
         )
 
-    def run_runtime(self, *args, options=None, mouse=False, **extra_env):
+    def run_runtime(self, *args, options=None, mouse=False, hsl_init="", hsl_stop="", **extra_env):
         env = self.env.copy()
         # A None value removes the variable, which no plain update() can do.
         for key, value in extra_env.items():
@@ -160,7 +160,9 @@ class TmuxRuntimeTests(unittest.TestCase):
         if "HSL_STATUS_OPTIONS" not in extra_env:
             pairs = DEFAULT_OPTIONS if options is None else options
             env["HSL_STATUS_OPTIONS"] = str(
-                write_protocol(self.base, pairs, mouse_clicks=mouse)
+                write_protocol(
+                    self.base, pairs, mouse_clicks=mouse, hsl_init=hsl_init, hsl_stop=hsl_stop
+                )
             )
         return subprocess.run(
             ["sh", str(RUNTIME), *args], cwd=ROOT, env=env, text=True, capture_output=True
@@ -515,6 +517,40 @@ class TmuxRuntimeTests(unittest.TestCase):
             record = json.loads((self.base / f"herdr-{index}.json").read_text())
             self.assertEqual(record["args"], ["--session", f"s{index}"])
         self.assertEqual(list(self.private_tmp.iterdir()), [])
+
+    def test_runs_hsl_init_hook_with_environment(self):
+        log = self.base / "init_hook.json"
+        cmd = (
+            f"python3 -c \"import json, os; "
+            f"open('{log}', 'w').write(json.dumps({{"
+            f"'cfg': os.environ.get('HERDR_PLUGIN_CONFIG_DIR', ''), "
+            f"'session': os.environ.get('HERDR_SESSION', ''), "
+            f"'instance': os.environ.get('HSL_INSTANCE_ID', '')"
+            f"}}))\""
+        )
+        result = self.run_runtime(hsl_init=cmd, HERDR_SESSION="work")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(log.exists(), "hsl_init hook did not run")
+        data = json.loads(log.read_text())
+        self.assertEqual(data["cfg"], "/cfg")
+        self.assertEqual(data["session"], "work")
+        self.assertTrue(data["instance"].startswith("hsl-herdr-statusline."))
+
+    def test_runs_hsl_stop_hook_during_cleanup(self):
+        log = self.base / "stop_hook.txt"
+        cmd = f"printf 'stopped' > '{log}'"
+        result = self.run_runtime("--session", "work", hsl_stop=cmd)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(log.exists(), "hsl_stop hook did not run")
+        self.assertEqual(log.read_text(), "stopped")
+
+    def test_failing_lifecycle_hooks_do_not_abort_runtime(self):
+        result = self.run_runtime(
+            "--session", "work", hsl_init="exit 42", hsl_stop="exit 99"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("hsl: hsl_init hook failed (exit 42): exit 42", result.stderr)
+        self.assertIn("hsl: hsl_stop hook failed (exit 99): exit 99", result.stderr)
 
     def wire(self, *, hook="#!/bin/sh\nexit 0\n", executable=True,
              config_dir=True, version="tmux 3.7b", reject=None,
