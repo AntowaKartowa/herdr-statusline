@@ -86,6 +86,35 @@ Three constraints shape the layout:
 - There is no hover: tmux has no `MouseMove` binding, so a button has to look
   clickable on its own.
 
+## Lifecycle hooks (`hsl_init` and `hsl_stop`)
+
+For complex status line data that takes too long to compute inside the 1-second status interval loop (e.g., external tools, prompt engines like Starship, or git queries on huge repos), use background processes and pre-computed cache files instead of running heavy logic inside statusline helpers.
+
+Configure lifecycle hooks at the top level of `config.toml`, next to `enabled` and `mouse_clicks`:
+
+```toml
+enabled = true
+
+hsl_init = "zsh $HERDR_PLUGIN_CONFIG_DIR/daemon.zsh &"
+hsl_stop = "$HERDR_PLUGIN_CONFIG_DIR/daemon-stop.sh"
+
+[statusline]
+status_interval = 1
+status_left = "#(cat $HERDR_PLUGIN_CONFIG_DIR/cache.txt)"
+```
+
+Apply these rules when working with lifecycle hooks:
+
+- **`hsl_init`**: Runs after the tmux server is configured but before Herdr starts. Use it to start background daemons, watchers, or initial setup tasks. Always background long-running daemons (e.g. with `&`) so `hsl_init` does not block Herdr from launching.
+- **`hsl_stop`**: Runs during cleanup before the tmux server is killed. Use it to terminate background processes or remove transient sockets/PID files. Keep this fast and non-blocking — it runs inside a signal handler / exit trap.
+- **Environment variables**: Both hooks are executed by `/bin/sh -c` and receive:
+  - `$HERDR_PLUGIN_CONFIG_DIR`: the resolved plugin config directory. Always use this instead of hardcoding absolute paths.
+  - `$HERDR_SESSION`: the current Herdr session name.
+  - `$HSL_INSTANCE_ID`: the instance socket identifier.
+  - `$HSL_CACHE_DIR`: cache directory if set in environment.
+- **Single-line values**: Hook commands must be a single line. The parser rejects commands containing newline (`\n`) or carriage return (`\r`) characters.
+- **Error tolerance**: A failing hook logs a diagnostic warning to stderr, but does not abort HSL startup or shutdown.
+
 ## Validate before reporting
 
 Run `sh -n` on every shell helper you changed.
