@@ -7,6 +7,7 @@ HERDR_BIN=${HSL_HERDR_BIN:-herdr}
 # herdr resolves its session name from --session, then HERDR_SESSION, then this
 # literal. Mirror it so the status line names the session herdr attached to.
 DEFAULT_SESSION=default
+ORIGINAL_UMASK=$(umask)
 root=$(CDPATH='' cd -P "$(dirname "$0")/.." && pwd)
 HELPER=$root/target/release/hsl-config
 RUN_TMUX=$root/scripts/run-in-tmux
@@ -140,6 +141,7 @@ config_dir=$("$HERDR_BIN" plugin config-dir "$PLUGIN_ID") || {
 
 umask 077
 options=$(mktemp "${TMPDIR:-/tmp}/hsl-status-options.XXXXXX") || exit 1
+umask "$ORIGINAL_UMASK"
 trap 'rm -f "$options"' EXIT HUP INT TERM
 "$HELPER" load "$config_dir/config.toml" >"$options" || exit 2
 
@@ -234,4 +236,5 @@ fi
 HSL_STATUS_OPTIONS=$options \
 HERDR_PLUGIN_CONFIG_DIR=$config_dir \
 HSL_HERDR_BIN=$HERDR_BIN \
+HSL_ORIGINAL_UMASK=$ORIGINAL_UMASK \
 exec "$RUN_TMUX" "$@"
