@@ -85,6 +85,7 @@ exit_file=$runtime/exit-status
 stderr_file=$runtime/stderr
 args_dir=$runtime/args
 mkdir "$args_dir"
+umask "${HSL_ORIGINAL_UMASK:-022}"
 
 # Invoked through `trap` below, which shellcheck cannot follow. The code for
 # this differs by version: 0.11 reports SC2329 on the definition, older
@@ -171,6 +172,7 @@ printf '%s\n' "$count" >"$args_dir/count"
     printf 'HSL_EXIT_FILE=%s\n' "$(shell_quote "$exit_file")"
     printf 'HSL_STDERR_FILE=%s\n' "$(shell_quote "$stderr_file")"
     printf 'HSL_TMUX_BIN=%s\n' "$(shell_quote "$TMUX_BIN")"
+    printf 'HSL_ORIGINAL_UMASK' "${HSL_ORIGINAL_UMASK:-022}"
     cat <<'EOF_LAUNCH'
 # tmux destroys the pane the instant this exits, taking any diagnostics with
 # it, so keep stderr on disk for run-in-tmux to replay after the client leaves.
@@ -186,6 +188,7 @@ while [ "$i" -lt "$count" ]; do
     i=$((i + 1))
 done
 "$HSL_TMUX_BIN" wait-for hsl-start || exit 1
+umask "$HSL_ORIGINAL_UMASK"
 "$@"
 status=$?
 printf '%s\n' "$status" >"$HSL_EXIT_FILE.tmp"
